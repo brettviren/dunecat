@@ -18,7 +18,6 @@ const detector = computed(() =>
 const loading = ref(false);
 const error = ref(null);
 const file = ref(null);
-const copyState = ref('idle');  // 'idle' | 'copied'
 
 const replicas = ref(null);          // { replicas: [...], cached, bytes, ... }
 const replicasLoading = ref(false);
@@ -31,10 +30,6 @@ const sortedMetadata = computed(() => {
     a.localeCompare(b),
   );
 });
-
-const rucioCommand = computed(() =>
-  file.value ? `rucio download dune:${file.value.name}` : '',
-);
 
 async function fetchFile() {
   if (!did.value) return;
@@ -91,16 +86,6 @@ function gotoDetector() {
 
 function gotoDataset(datasetDid) {
   router.push({ name: 'dataset-files', params: { did: datasetDid } });
-}
-
-async function copyRucio() {
-  try {
-    await navigator.clipboard.writeText(rucioCommand.value);
-    copyState.value = 'copied';
-    setTimeout(() => (copyState.value = 'idle'), 1500);
-  } catch {
-    copyState.value = 'idle';
-  }
 }
 
 function fmtBytes(n) {
@@ -174,7 +159,44 @@ function fmtBytesShort(n) {
     </div>
 
     <div v-else-if="file" class="grid">
-      <!-- Left: metadata -->
+      <!-- Left: replicas + metadata -->
+      <div class="main">
+      <section class="card">
+        <div class="card-head card-head-row">
+          <span>
+            Replicas
+            <span v-if="replicas?.replicas" class="head-meta">
+              · {{ replicas.replicas.length }}{{ replicas.cached ? ' · cached' : '' }}
+            </span>
+          </span>
+          <button class="btn btn-small" @click="toggleReplicas">
+            {{ replicasOpen ? 'Hide' : (replicas ? 'Show' : 'Look up') }}
+          </button>
+        </div>
+        <div v-if="replicasOpen">
+          <div v-if="replicasLoading" class="card-empty">Looking up replicas…</div>
+          <div v-else-if="replicasError" class="replicas-error">
+            <div class="replicas-error-title">
+              {{ replicasError.status === 401 ? 'Rucio auth' :
+                 replicasError.status === 404 ? 'No replicas' : 'Rucio error' }}
+            </div>
+            <div class="replicas-error-detail">{{ replicasError.message }}</div>
+          </div>
+          <div v-else-if="replicas?.replicas?.length" class="replicas-list">
+            <div v-for="r in replicas.replicas" :key="`${r.rse}|${r.pfn}`" class="replica-row">
+              <div class="replica-rse">{{ r.rse }}</div>
+              <div class="replica-pfn">{{ r.pfn }}</div>
+            </div>
+          </div>
+          <div v-else-if="replicas" class="card-empty">
+            No replicas found for this file.
+          </div>
+        </div>
+        <p v-else class="card-body-text">
+          Query Rucio for RSE + PFN replicas (cached 1h).
+        </p>
+      </section>
+
       <section class="card">
         <div class="card-head">
           Metadata · {{ sortedMetadata.length }} fields
@@ -189,6 +211,7 @@ function fmtBytesShort(n) {
           No metadata on this file.
         </div>
       </section>
+      </div>
 
       <!-- Right: stack -->
       <aside class="side">
@@ -283,54 +306,6 @@ function fmtBytesShort(n) {
           </div>
         </section>
 
-        <section class="card">
-          <div class="card-head">Download</div>
-          <p class="card-body-text">
-            Copy this command into your terminal (Rucio must be configured locally).
-          </p>
-          <div class="rucio-row">
-            <code class="rucio-cmd">{{ rucioCommand }}</code>
-            <button class="btn btn-copy" @click="copyRucio">
-              {{ copyState === 'copied' ? '✓ Copied' : 'Copy' }}
-            </button>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="card-head card-head-row">
-            <span>
-              Replicas
-              <span v-if="replicas?.replicas" class="head-meta">
-                · {{ replicas.replicas.length }}{{ replicas.cached ? ' · cached' : '' }}
-              </span>
-            </span>
-            <button class="btn btn-small" @click="toggleReplicas">
-              {{ replicasOpen ? 'Hide' : (replicas ? 'Show' : 'Look up') }}
-            </button>
-          </div>
-          <div v-if="replicasOpen">
-            <div v-if="replicasLoading" class="card-empty">Looking up replicas…</div>
-            <div v-else-if="replicasError" class="replicas-error">
-              <div class="replicas-error-title">
-                {{ replicasError.status === 401 ? 'Rucio auth' :
-                   replicasError.status === 404 ? 'No replicas' : 'Rucio error' }}
-              </div>
-              <div class="replicas-error-detail">{{ replicasError.message }}</div>
-            </div>
-            <div v-else-if="replicas?.replicas?.length" class="replicas-list">
-              <div v-for="r in replicas.replicas" :key="`${r.rse}|${r.pfn}`" class="replica-row">
-                <div class="replica-rse">{{ r.rse }}</div>
-                <div class="replica-pfn">{{ r.pfn }}</div>
-              </div>
-            </div>
-            <div v-else-if="replicas" class="card-empty">
-              No replicas found for this file.
-            </div>
-          </div>
-          <p v-else class="card-body-text">
-            Query Rucio for RSE + PFN replicas (cached 1h).
-          </p>
-        </section>
       </aside>
     </div>
   </div>
@@ -390,7 +365,6 @@ function fmtBytesShort(n) {
 }
 .btn:hover { background: var(--surface); }
 
-.btn-copy { min-width: 80px; justify-content: center; }
 .btn-small { height: 22px; padding: 0 8px; font-size: 11px; }
 
 .card-head-row {
@@ -450,6 +424,7 @@ function fmtBytesShort(n) {
   gap: 24px;
   align-items: start;
 }
+.main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
 /* Card */
@@ -544,27 +519,6 @@ function fmtBytesShort(n) {
 .kv-key { font-size: 11px; color: var(--dim); }
 .kv-val { font-size: 12px; color: var(--ink); word-break: break-all; }
 .mono { font-family: var(--font-mono); font-size: 11.5px; }
-
-/* Rucio command */
-.rucio-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px 12px;
-}
-.rucio-cmd {
-  flex: 1;
-  display: block;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--ink);
-  word-break: break-all;
-  user-select: all;
-}
 
 /* Placeholders */
 .placeholder {
