@@ -10,6 +10,7 @@ import {
   validateQuery,
 } from '../api.js';
 import { loadSavedQueries, nav } from '../composables/useNav.js';
+import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -250,6 +251,7 @@ const canNext = computed(() => {
 });
 
 function openFile(did) {
+  if (hasSelection()) return;
   router.push({ name: 'file-detail', params: { did } });
 }
 

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getCondbColumns, getDetectors, getRunsConditions } from '../api.js';
+import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -82,7 +83,11 @@ const condbDetectors = computed(() =>
 const selectedDetector = computed(
   () => detectors.value.find((d) => d.id === detectorId.value) || null,
 );
-const hasRunRange = computed(() => runMin.value !== '' && runMax.value !== '');
+// If only one of min/max is filled, treat it as a single-run search by
+// using the same value for both ends.
+const effectiveRunMin = computed(() => runMin.value || runMax.value || '');
+const effectiveRunMax = computed(() => runMax.value || runMin.value || '');
+const hasRunRange = computed(() => effectiveRunMin.value !== '');
 const hasDateRange = computed(() => startDate.value !== '' || stopDate.value !== '');
 const hasBeamFilter = computed(
   () =>
@@ -104,7 +109,7 @@ const canApply = computed(() => {
     !hasCustomFilter.value
   )
     return false;
-  if (hasRunRange.value && Number(runMin.value) > Number(runMax.value)) return false;
+  if (hasRunRange.value && Number(effectiveRunMin.value) > Number(effectiveRunMax.value)) return false;
   if (
     startDate.value !== '' &&
     stopDate.value !== '' &&
@@ -128,8 +133,8 @@ async function fetchRows() {
   submitted.value = true;
   try {
     const payload = await getRunsConditions(detectorId.value, {
-      run_min: runMin.value,
-      run_max: runMax.value,
+      run_min: effectiveRunMin.value,
+      run_max: effectiveRunMax.value,
       start: startDate.value,
       stop: stopDate.value,
       run_type: runType.value,
@@ -168,6 +173,7 @@ function onApply() {
 }
 
 function openRun(tv) {
+  if (hasSelection()) return;
   router.push({
     name: 'run-detail',
     params: { run: String(Math.trunc(tv)) },
@@ -281,6 +287,7 @@ function beamSetOf(r) {
           inputmode="numeric"
           class="control mono"
           placeholder="e.g. 27298"
+          @keyup.enter="canApply && onApply()"
         />
       </label>
       <label class="field">
@@ -417,7 +424,6 @@ function beamSetOf(r) {
             <th>stream</th>
             <th title="Beam setpoint (filter value)">beam (set)</th>
             <th title="Beam measured (mean); can diverge from setpoint">beam (meas)</th>
-            <th>polarity</th>
             <th title="gain (mV/fC)">gain</th>
             <th title="peak_time (µs)">peak</th>
             <th title="leak current (HD only)">leak</th>
@@ -437,7 +443,6 @@ function beamSetOf(r) {
             <td>{{ r.data_stream || '—' }}</td>
             <td class="mono">{{ fmtMom(beamSetOf(r)) }}</td>
             <td class="mono dim">{{ fmtMom(beamOf(r)) }}</td>
-            <td>{{ r.beam_polarity || '—' }}</td>
             <td class="mono">{{ fmtNum1(r.gain) }}</td>
             <td class="mono">{{ fmtNum1(r.peak_time) }}</td>
             <td class="mono">{{ fmtNum1(r.leak) }}</td>

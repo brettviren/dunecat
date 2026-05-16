@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getRun, getRunConditions, getDetectors } from '../api.js';
+import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -77,6 +78,7 @@ function onLookup() {
 }
 
 function openFile(did) {
+  if (hasSelection()) return;
   router.push({ name: 'file-detail', params: { did } });
 }
 

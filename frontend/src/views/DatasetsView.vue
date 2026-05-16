@@ -8,6 +8,7 @@ import {
   loadCounts,
   setDetector,
 } from '../composables/useNav.js';
+import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -126,6 +127,7 @@ async function onRefresh() {
 }
 
 function openDataset(did) {
+  if (hasSelection()) return;
   router.push({ name: 'dataset-files', params: { did } });
 }
 

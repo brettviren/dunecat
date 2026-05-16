@@ -47,9 +47,6 @@ function onSavedPicked(e) {
       <RouterLink :to="{ name: 'datasets' }" class="nav-item" active-class="active">
         Datasets
       </RouterLink>
-      <RouterLink :to="{ name: 'run-lookup' }" class="nav-item" active-class="active">
-        Run
-      </RouterLink>
       <RouterLink :to="{ name: 'runs-search' }" class="nav-item" active-class="active">
         Runs
       </RouterLink>

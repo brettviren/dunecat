@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getFile, getReplicas } from '../api.js';
 import { loadDetectors, nav } from '../composables/useNav.js';
+import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -85,7 +86,13 @@ function gotoDetector() {
 }
 
 function gotoDataset(datasetDid) {
+  if (hasSelection()) return;
   router.push({ name: 'dataset-files', params: { did: datasetDid } });
+}
+
+function openFile(fileDid) {
+  if (!fileDid || hasSelection()) return;
+  router.push({ name: 'file-detail', params: { did: fileDid } });
 }
 
 function fmtBytes(n) {
@@ -244,7 +251,7 @@ function fmtBytesShort(n) {
               :key="p.fid"
               class="ds-row"
               :class="{ disabled: !p.did }"
-              @click="p.did && router.push({ name: 'file-detail', params: { did: p.did } })"
+              @click="openFile(p.did)"
             >
               <template v-if="p.did">
                 <span class="ds-ns">{{ p.namespace }}:</span><span class="ds-name">{{ p.name }}</span>
@@ -270,7 +277,7 @@ function fmtBytesShort(n) {
               :key="ch.fid"
               class="ds-row"
               :class="{ disabled: !ch.did }"
-              @click="ch.did && router.push({ name: 'file-detail', params: { did: ch.did } })"
+              @click="openFile(ch.did)"
             >
               <template v-if="ch.did">
                 <span class="ds-ns">{{ ch.namespace }}:</span><span class="ds-name">{{ ch.name }}</span>

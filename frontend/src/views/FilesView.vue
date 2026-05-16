@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getDataset, getFiles, getFilesCount } from '../api.js';
 import { loadDetectors, nav } from '../composables/useNav.js';
+import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -138,6 +139,7 @@ onMounted(async () => {
 });
 
 function openFile(fileDid) {
+  if (hasSelection()) return;
   router.push({ name: 'file-detail', params: { did: fileDid } });
 }
 
