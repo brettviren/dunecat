@@ -23,6 +23,7 @@ function buildQuery(params) {
   return usp.toString();
 }
 
+export const getMe = () => jsonFetch('/api/me');
 export const getDetectors = () => jsonFetch('/api/detectors');
 export const getDetectorCounts = () => jsonFetch('/api/detectors/counts');
 

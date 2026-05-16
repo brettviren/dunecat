@@ -8,6 +8,10 @@ from typing import Any
 
 log = logging.getLogger("uvicorn.error")
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +76,11 @@ async def _auth_error(_: Request, exc: AuthenticationError) -> JSONResponse:
 @app.exception_handler(MCWebAPIError)
 async def _metacat_error(_: Request, exc: MCWebAPIError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.get("/api/me")
+def get_me() -> dict[str, str | None]:
+    return {"user": os.environ.get("METACAT_USER") or None}
 
 
 @app.get("/api/detectors")

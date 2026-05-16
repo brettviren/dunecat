@@ -1,12 +1,24 @@
 <script setup>
-import { onMounted } from 'vue';
+import { onMounted, ref, computed } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { nav, loadSavedQueries } from '../../composables/useNav.js';
+import { getMe } from '../../api.js';
 
 const router = useRouter();
+const me = ref(null);
 
-onMounted(() => {
+const initials = computed(() =>
+  me.value ? me.value.slice(0, 2).toUpperCase() : '',
+);
+
+onMounted(async () => {
   loadSavedQueries();
+  try {
+    const resp = await getMe();
+    me.value = resp?.user || null;
+  } catch {
+    me.value = null;
+  }
 });
 
 function onSavedPicked(e) {
@@ -56,7 +68,7 @@ function onSavedPicked(e) {
           ★ {{ q.name }}
         </option>
       </select>
-      <div class="user">CZ</div>
+      <div v-if="initials" class="user" :title="me">{{ initials }}</div>
     </div>
   </header>
 </template>
