@@ -115,8 +115,12 @@ def file_datasets_cmd(
 @app.command("login")
 def login_cmd(
     target: str = typer.Argument(
-        "metacat",
-        help="Which service to log into: 'metacat' (default) or 'rucio'.",
+        "all",
+        help=(
+            "Which service to log into: 'all' (default — runs htgettoken "
+            "and then metacat with -m token), 'rucio' (htgettoken only), "
+            "or 'metacat' (metacat only)."
+        ),
     ),
     user: str | None = typer.Option(
         None, "--user", "-u",
@@ -124,28 +128,73 @@ def login_cmd(
     ),
     method: str | None = typer.Option(
         None, "--method", "-m",
-        help="Auth method (metacat only; defaults to METACAT_AUTH_METHOD from .env).",
+        help=(
+            "Metacat auth method: 'token' (default), 'password', or 'x509'. "
+            "Only applies to the metacat leg."
+        ),
     ),
 ) -> None:
-    """Log in to metacat (default) or rucio.
+    """Log in to dunecat's services.
 
-    metacat: wraps `metacat auth login`, sourcing server URLs from .env.
-    rucio:   wraps `htgettoken` with the canonical DUNE vault flags.
+    Default (`dunecat login`) runs the OIDC pipeline: htgettoken mints a
+    DUNE bearer, then `metacat auth login -m token` exchanges that bearer
+    for a metacat session. Pass `rucio` to skip the metacat step; pass
+    `metacat` to skip htgettoken (useful with `--method password` as a
+    fallback when OIDC misbehaves).
     """
     load_dotenv()
     if target == "rucio":
         _rucio_login()
         return
-    if target != "metacat":
+    if target == "metacat":
+        _metacat_login(user=user, method=method)
+        return
+    if target == "all":
+        _rucio_login(exit_on_done=False)
+        _metacat_login(user=user, method=method, exit_on_done=False)
+        raise typer.Exit(0)
+    typer.echo(
+        f"Unknown login target: '{target}'. Use 'all', 'rucio', or 'metacat'.",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
+def _rucio_login(*, exit_on_done: bool = True) -> None:
+    if shutil.which("htgettoken") is None:
         typer.echo(
-            f"Unknown login target: '{target}'. Use 'metacat' or 'rucio'.",
+            "`htgettoken` not found on PATH. Try `uv run dunecat login` "
+            "so it can find the one in the project's virtualenv.",
             err=True,
         )
         raise typer.Exit(2)
+    cmd = [
+        "htgettoken",
+        "--vaulttokenttl=10d",
+        "--vaultserver=htvaultprod.fnal.gov",
+        "--issuer=dune",
+    ]
+    typer.echo("$ " + " ".join(cmd), err=True)
+    rc = subprocess.call(cmd)
+    if rc != 0 and exit_on_done:
+        raise typer.Exit(rc)
+    if rc != 0:
+        typer.echo("htgettoken failed; aborting before metacat step.", err=True)
+        raise typer.Exit(rc)
+    if exit_on_done:
+        raise typer.Exit(0)
+
+
+def _metacat_login(
+    *,
+    user: str | None = None,
+    method: str | None = None,
+    exit_on_done: bool = True,
+) -> None:
     server = os.environ.get("METACAT_SERVER_URL")
     auth = os.environ.get("METACAT_AUTH_SERVER_URL")
     user = user or os.environ.get("METACAT_USER") or None
-    method = method or os.environ.get("METACAT_AUTH_METHOD") or None
+    method = method or os.environ.get("METACAT_AUTH_METHOD") or "token"
     missing = []
     if not server:
         missing.append("METACAT_SERVER_URL")
@@ -153,8 +202,6 @@ def login_cmd(
         missing.append("METACAT_AUTH_SERVER_URL")
     if not user:
         missing.append("METACAT_USER (or pass --user)")
-    if not method:
-        missing.append("METACAT_AUTH_METHOD (or pass --method)")
     if missing:
         typer.echo("Missing: " + ", ".join(missing), err=True)
         raise typer.Exit(2)
@@ -168,26 +215,10 @@ def login_cmd(
     cmd = ["metacat", "-s", server, "-a", auth, "auth", "login", "-m", method, user]
     typer.echo("$ " + " ".join(cmd), err=True)
     rc = subprocess.call(cmd)
-    raise typer.Exit(rc)
-
-
-def _rucio_login() -> None:
-    if shutil.which("htgettoken") is None:
-        typer.echo(
-            "`htgettoken` not found on PATH. Try `uv run dunecat login rucio` "
-            "so it can find the one in the project's virtualenv.",
-            err=True,
-        )
-        raise typer.Exit(2)
-    cmd = [
-        "htgettoken",
-        "--vaulttokenttl=10d",
-        "--vaultserver=htvaultprod.fnal.gov",
-        "--issuer=dune",
-    ]
-    typer.echo("$ " + " ".join(cmd), err=True)
-    rc = subprocess.call(cmd)
-    raise typer.Exit(rc)
+    if exit_on_done:
+        raise typer.Exit(rc)
+    if rc != 0:
+        raise typer.Exit(rc)
 
 
 @app.command("query")

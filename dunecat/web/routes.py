@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from metacat.webapi import AuthenticationError, MCWebAPIError
 
-from dunecat.client import get_client as _get_metacat_client
+from dunecat.client import get_client as _raw_metacat_client
 from dunecat.files import build_mql
 from dunecat.filters import (
     FileFilters,
@@ -27,7 +27,15 @@ from dunecat.filters import (
     value_matches,
 )
 
-from . import cache, condb, rucio as rucio_mod
+from . import auth, cache, condb, rucio as rucio_mod
+
+
+def _get_metacat_client():
+    """Ensure the cached metacat session is fresh, then hand back a client.
+    Renewal is in-memory + mutex-guarded; cost is ~zero when the cache is
+    still valid (just a datetime comparison)."""
+    auth.ensure_fresh_metacat_session()
+    return _raw_metacat_client()
 from .detectors import (
     apply_default_filters,
     datasets_for_detector,
@@ -40,6 +48,7 @@ from .detectors import (
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     cache.init_db()
+    auth.prime()
     yield
 
 
@@ -60,16 +69,45 @@ app.add_middleware(
 
 @app.exception_handler(AuthenticationError)
 async def _auth_error(_: Request, exc: AuthenticationError) -> JSONResponse:
-    server = os.environ.get("METACAT_SERVER_URL", "<METACAT_SERVER_URL>")
-    auth = os.environ.get("METACAT_AUTH_SERVER_URL", "<METACAT_AUTH_SERVER_URL>")
+    # The server-side renewer thought the session was fresh but metacat
+    # disagreed — invalidate so the next call re-mints, and ask the user
+    # to retry once.
+    auth.invalidate_metacat_cache()
     return JSONResponse(
         status_code=401,
         content={
             "detail": (
-                f"Token missing or expired ({exc}). Run: "
-                f"metacat -s {server} -a {auth} auth login -m <method> <username>"
+                f"Metacat auth rejected ({exc}). Tried to renew; reload "
+                f"the page to retry. If this persists run: "
+                f"uv run dunecat login (or `--method password` to fall back)."
             )
         },
+    )
+
+
+@app.exception_handler(auth.VaultExpiredError)
+async def _vault_expired(_: Request, exc: auth.VaultExpiredError) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": str(exc)})
+
+
+@app.exception_handler(auth.MetacatRejectError)
+async def _metacat_reject(_: Request, exc: auth.MetacatRejectError) -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={
+            "detail": (
+                f"{exc}. Fallback: uv run dunecat login metacat "
+                f"--method password."
+            )
+        },
+    )
+
+
+@app.exception_handler(auth.AuthRenewError)
+async def _auth_transient(_: Request, exc: auth.AuthRenewError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": f"Auth renewal failed: {exc}. Retry in a moment."},
     )
 
 

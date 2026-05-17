@@ -18,9 +18,11 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+from . import auth
+
 log = logging.getLogger("uvicorn.error")
 
-HTGETTOKEN_CMD = "uv run dunecat login rucio"
+HTGETTOKEN_CMD = "uv run dunecat login"
 
 
 class RucioAuthError(Exception):
@@ -95,9 +97,20 @@ def _token_path() -> Path:
 
 def _get_client():
     global _client
+    _ensure_config()
+    # Top up the bearer in-memory expiry cache before we hand out a client.
+    # Silent re-mint when the vault token is alive; raises VaultExpiredError
+    # otherwise so the API layer surfaces the "browser login needed" copy.
+    try:
+        auth.ensure_fresh_bearer()
+    except auth.VaultExpiredError as e:
+        raise RucioAuthError(str(e)) from e
+    except auth.AuthRenewError as e:
+        # Other transient renewal failure — still try the existing token if
+        # the file is there; otherwise propagate.
+        log.warning("rucio: bearer renew failed (%s); falling back to disk", e)
     if _client is not None:
         return _client
-    _ensure_config()
     token = _token_path()
     if not token.exists():
         raise RucioAuthError(

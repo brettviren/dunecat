@@ -37,70 +37,50 @@ and preferred auth method:
 METACAT_SERVER_URL=https://metacat.fnal.gov:9443/dune_meta_prod/app
 METACAT_AUTH_SERVER_URL=https://metacat.fnal.gov:8143/auth/dune
 METACAT_USER=<your-username>
-METACAT_AUTH_METHOD=password          # or x509 / token; see `metacat auth login --help`
+RUCIO_ACCOUNT=<your FNAL Rucio account, usually your username>
+BEARER_TOKEN_FILE=/tmp/bt_u<your-uid>      # default htgettoken path
 ```
 
-Authenticate once to populate `~/.token_library` (reused by both the web app
-and the CLI):
+## Authenticate
+
+One command logs you into both metacat and Rucio:
 
 ```bash
-uv run dunecat login                  # uses .env defaults; --user/--method override
+uv run dunecat login
 ```
 
-This wraps the upstream `metacat auth login` command using the URLs and
-defaults from `.env`. Tokens expire after one week. When the app returns
-`Token missing or expired`, re-run `uv run dunecat login`.
+This runs `htgettoken --issuer=dune` (the OIDC device-code flow, browser
+opens the first time per ~10 days) followed by `metacat auth login -m
+token`, which exchanges the OIDC bearer for a metacat session. The web
+server then keeps both credentials fresh automatically — it re-mints the
+bearer and the metacat session in the background when they get within a
+few minutes of expiry. You only need to re-run `dunecat login` when the
+10-day vault refresh token rolls (or after a reboot that wipes `/tmp`).
 
-## Rucio (file replicas) — optional
-
-The file detail page can look up Rucio replicas (RSE + PFN per file) on
-demand. This needs a DUNE-scoped OIDC bearer token. Both `rucio-clients`
-and `htgettoken` are project dependencies, so once `uv sync` has run
-they're available at `.venv/bin/htgettoken` — nothing else to install.
-
-Set the relevant variables in `.env`:
-
-```
-RUCIO_ACCOUNT=<your FNAL Rucio account, e.g. your username>
-BEARER_TOKEN_FILE=/tmp/bt_u<your-uid>      # default htgettoken path on Linux/macOS
-```
-
-Mint a token (browser device-code flow the first time per ~10 days):
+### Other login variants
 
 ```bash
-uv run dunecat login rucio
+uv run dunecat login rucio                       # htgettoken only
+uv run dunecat login metacat                     # metacat only (uses existing bearer)
+uv run dunecat login metacat --method password   # legacy fallback
 ```
 
-This wraps `htgettoken --vaulttokenttl=10d --vaultserver=htvaultprod.fnal.gov --issuer=dune` — the canonical DUNE vault flags. Run it directly if you prefer.
+The password fallback exists for the rare case the OIDC pipeline misbehaves
+(e.g. your IAM account isn't provisioned in metacat yet). Add
+`METACAT_AUTH_METHOD=password` to `.env` if you want password to be the
+default for the metacat leg.
 
-This produces:
+When `/api/*` returns 401, the message in the UI tells you which command
+to run. Common cases:
 
-- A bearer token at `/tmp/bt_u<uid>` — good ~3 hours. dunecat reads this
-  fresh on each Rucio call.
-- A vault refresh token at `/tmp/vt_u<uid>` — good 10 days. Lets future
-  `htgettoken` invocations re-mint the bearer **without** another browser
-  dance.
+- `Vault token expired. Run: uv run dunecat login` — your 10-day vault
+  refresh rolled over; one browser login renews it.
+- `Metacat refused OIDC bearer: …` — server-side OIDC config drift; fall
+  back to `--method password` while the operators sort it out.
 
-To keep the bearer fresh during a long uvicorn session, re-mint every
-~2 hours. Two convenient options on macOS:
-
-```bash
-# Quick: from another terminal whenever you see a 401 from /api/replicas
-uv run dunecat login rucio
-
-# Hands-off: a launchd / cron job
-# In `crontab -e`, every 2 hours:
-0 */2 * * * cd ~/Code/metacat && .venv/bin/htgettoken \
-  --vaultserver=htvaultprod.fnal.gov --issuer=dune >/dev/null 2>&1
-```
-
-When the bearer is missing or expired, `/api/replicas` returns 401 with
-the literal command above — the UI surfaces it verbatim so you know
-exactly what to run.
-
-The Rucio config (`~/.dunecat/rucio/etc/rucio.cfg`) is generated from
-your `.env` values on first use. You don't need to maintain it
-separately.
+The Rucio config at `~/.dunecat/rucio/etc/rucio.cfg` is generated from
+`.env` on first use; a symlink at `<venv>/etc/rucio.cfg` lets the bare
+`rucio` CLI find it without `RUCIO_HOME` exported.
 
 ## Run the web app
 
