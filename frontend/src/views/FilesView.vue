@@ -3,7 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getDataset, getFiles, getFilesCount } from '../api.js';
 import { loadDetectors, nav } from '../composables/useNav.js';
-import { hasSelection } from '../composables/useRowNav.js';
+import { useFileIdCopy } from '../composables/useFileIdCopy.js';
+import FileTable from '../components/FileTable.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -139,17 +140,12 @@ onMounted(async () => {
 });
 
 function openFile(fileDid) {
-  if (hasSelection()) return;
   router.push({ name: 'file-detail', params: { did: fileDid } });
 }
-
-const copyState = ref('idle');  // 'idle' | 'copied' | 'failed'
 
 // DIDs the user has explicitly ticked. Persisted in sessionStorage keyed
 // by (dataset, page, pageSize) so the selection survives a remount when
 // the user clicks a row by accident and hits the browser back button.
-// Changing page or page size moves to a fresh key (those rows aren't on
-// screen anymore), but returning to the same page restores the picks.
 const selected = ref(new Set());
 const selectionKey = computed(
   () => `files-selection:${did.value}:p${page.value}:s${pageSize.value}`,
@@ -168,46 +164,14 @@ watch(selected, (s) => {
   try {
     if (s.size === 0) sessionStorage.removeItem(selectionKey.value);
     else sessionStorage.setItem(selectionKey.value, JSON.stringify([...s]));
-  } catch (_e) { /* sessionStorage full or unavailable — fine, lose the persistence */ }
+  } catch (_e) { /* sessionStorage full or unavailable — fine */ }
 }, { deep: true });
 
-const selectableDids = computed(
-  () => (data.value?.rows || []).map((r) => `${r.namespace}:${r.name}`),
+const fileRows = computed(() => data.value?.rows || []);
+const { copyState, copyCount, copyDids, selectableDids } = useFileIdCopy(
+  fileRows,
+  selected,
 );
-const allSelected = computed(
-  () =>
-    selectableDids.value.length > 0 &&
-    selectableDids.value.every((d) => selected.value.has(d)),
-);
-const copyCount = computed(
-  () => selected.value.size || selectableDids.value.length,
-);
-
-function toggleRow(did) {
-  const next = new Set(selected.value);
-  if (next.has(did)) next.delete(did);
-  else next.add(did);
-  selected.value = next;
-}
-
-function toggleAll() {
-  if (allSelected.value) selected.value = new Set();
-  else selected.value = new Set(selectableDids.value);
-}
-
-async function copyDids() {
-  const dids = selected.value.size > 0
-    ? [...selected.value]
-    : selectableDids.value;
-  if (!dids.length) return;
-  try {
-    await navigator.clipboard.writeText(dids.join('\n'));
-    copyState.value = 'copied';
-  } catch (_e) {
-    copyState.value = 'failed';
-  }
-  setTimeout(() => { copyState.value = 'idle'; }, 1500);
-}
 
 function gotoDetector() {
   if (detector.value) {
@@ -221,30 +185,6 @@ function gotoDetector() {
 function fmtNum(n) {
   if (n == null) return '—';
   return new Intl.NumberFormat().format(n);
-}
-function fmtBytes(n) {
-  if (n == null) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0; let v = n;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
-  return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`;
-}
-function fmtTimestamp(ts) {
-  if (ts == null) return '—';
-  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
-  return d.toISOString().slice(0, 16).replace('T', ' ');
-}
-function pickRun(row) {
-  if (metadataLoading.value && !row.metadata) return '…';
-  const runs = row.metadata?.['core.runs'];
-  if (Array.isArray(runs) && runs.length) return runs[0];
-  return '—';
-}
-function pickEvents(row) {
-  if (metadataLoading.value && !row.metadata) return '…';
-  const events = row.metadata?.['core.events'];
-  if (Array.isArray(events)) return events.length;
-  return '—';
 }
 
 const sortedDatasetMeta = computed(() => {
@@ -384,44 +324,14 @@ function fmtMetaValue(v) {
             </div>
           </div>
 
-          <div class="table-card">
-            <div class="table-head with-meta">
-              <div class="th col-check">
-                <input
-                  type="checkbox"
-                  :checked="allSelected"
-                  :title="allSelected ? 'Deselect all on this page' : 'Select all on this page'"
-                  @change="toggleAll"
-                />
-              </div>
-              <div class="th col-name">File</div>
-              <div class="th col-run">Run</div>
-              <div class="th col-events">Events</div>
-              <div class="th col-size">Size</div>
-              <div class="th col-created">Created</div>
-            </div>
-            <div
-              v-for="row in data.rows"
-              :key="row.did"
-              class="tr with-meta"
-              @click="openFile(row.did)"
-            >
-              <div class="td col-check" @click.stop>
-                <input
-                  type="checkbox"
-                  :checked="selected.has(`${row.namespace}:${row.name}`)"
-                  @change="toggleRow(`${row.namespace}:${row.name}`)"
-                />
-              </div>
-              <div class="td col-name" :title="`${row.namespace}:${row.name}`">
-                <span class="ns">{{ row.namespace }}:</span><span class="nm">{{ row.name }}</span>
-              </div>
-              <div class="td col-run">{{ pickRun(row) }}</div>
-              <div class="td col-events">{{ fmtNum(pickEvents(row)) }}</div>
-              <div class="td col-size">{{ fmtBytes(row.size) }}</div>
-              <div class="td col-created">{{ fmtTimestamp(row.created_timestamp) }}</div>
-            </div>
-          </div>
+          <FileTable
+            :rows="data.rows"
+            v-model:selected="selected"
+            :show-metadata="true"
+            :metadata-loading="metadataLoading"
+            empty-message="This dataset has no files."
+            @open-file="openFile"
+          />
         </template>
       </section>
     </div>
@@ -550,67 +460,7 @@ function fmtMetaValue(v) {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--ink); border-color: var(--ink); color: white; }
 
-/* Table */
 .main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.table-card {
-  background: var(--page);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  overflow-x: auto;
-}
-.table-head, .tr {
-  display: grid;
-  grid-template-columns: 28px 1fr 90px 110px;
-  gap: 12px;
-  padding: 8px 16px;
-  align-items: center;
-  min-width: 748px;
-}
-.table-head.with-meta, .tr.with-meta {
-  grid-template-columns: 28px 1fr 70px 80px 90px 110px;
-}
-.col-check {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.col-check input[type="checkbox"] {
-  margin: 0;
-  cursor: pointer;
-}
-.table-head {
-  background: var(--page);
-  border-bottom: 1px solid var(--rule);
-}
-.th {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-.tr {
-  border-top: 1px solid var(--rule-soft);
-  cursor: pointer;
-  transition: background 0.12s;
-}
-.tr:hover { background: var(--surface); }
-
-.td { font-size: 12px; color: var(--ink); }
-.col-name {
-  font-family: var(--font-mono);
-  word-break: break-all;
-  min-width: 0;
-  line-height: 1.4;
-}
-.col-name .ns { color: var(--faint); font-size: 10.5px; }
-.col-name .nm { color: var(--ink); }
-.col-run, .col-events, .col-size, .col-created {
-  font-family: var(--font-mono);
-  text-align: right;
-  color: var(--dim);
-}
 
 /* Pager */
 .pager {

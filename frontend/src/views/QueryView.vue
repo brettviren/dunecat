@@ -10,7 +10,8 @@ import {
   validateQuery,
 } from '../api.js';
 import { loadSavedQueries, nav } from '../composables/useNav.js';
-import { hasSelection } from '../composables/useRowNav.js';
+import { useFileIdCopy } from '../composables/useFileIdCopy.js';
+import FileTable from '../components/FileTable.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -80,6 +81,12 @@ onMounted(async () => {
   loadSavedQueries();
   await loadByRouteId();
   loadPrefill();
+  // Re-execute on entry when there's a saved query selected — this is
+  // what the user expects after the browser back button (and what a
+  // bookmark to ?id=X should yield).
+  if (currentSavedId.value != null && mql.value.trim()) {
+    onRun();
+  }
 });
 
 // Validation
@@ -206,6 +213,7 @@ async function doFetch(token) {
     );
     if (token !== runToken) return;
     pageData.value = r;
+    executedMql.value = mql.value;
     // Reflect the new last_run_at in the sidebar without a full reload.
     if (currentSavedId.value != null) loadSavedQueries();
   } catch (e) {
@@ -251,9 +259,39 @@ const canNext = computed(() => {
 });
 
 function openFile(did) {
-  if (hasSelection()) return;
   router.push({ name: 'file-detail', params: { did } });
 }
+
+// Persisted per-page selection, same shape as FilesView. Keyed by the
+// MQL that actually produced the current rows (not the live editor
+// contents), so typing in the editor doesn't shuffle selection buckets.
+const executedMql = ref('');
+const selected = ref(new Set());
+const selectionKey = computed(
+  () => `query-selection:${executedMql.value}:p${page.value}:s${pageSize.value}`,
+);
+
+watch(selectionKey, (key) => {
+  try {
+    const raw = sessionStorage.getItem(key);
+    selected.value = raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (_e) {
+    selected.value = new Set();
+  }
+}, { immediate: true });
+
+watch(selected, (s) => {
+  try {
+    if (s.size === 0) sessionStorage.removeItem(selectionKey.value);
+    else sessionStorage.setItem(selectionKey.value, JSON.stringify([...s]));
+  } catch (_e) { /* fine */ }
+}, { deep: true });
+
+const resultRows = computed(() => pageData.value?.rows || []);
+const { copyState, copyCount, copyDids, selectableDids } = useFileIdCopy(
+  resultRows,
+  selected,
+);
 
 function fmtNum(n) {
   if (n == null) return '—';
@@ -265,11 +303,6 @@ function fmtBytes(n) {
   let i = 0; let v = n;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
   return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`;
-}
-function fmtTimestamp(ts) {
-  if (ts == null) return '—';
-  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
-  return d.toISOString().slice(0, 16).replace('T', ' ');
 }
 </script>
 
@@ -370,6 +403,20 @@ function fmtTimestamp(ts) {
               </template>
             </div>
             <div class="pager-controls">
+              <button
+                class="btn"
+                :disabled="!copyCount"
+                :title="
+                  selected.size > 0
+                    ? `Copy the ${selected.size} selected file IDs (namespace:name, one per line). Paste into 'rucio list-file-replicas', 'metacat file show', etc.`
+                    : `Copy all ${selectableDids.length} file IDs on this page (namespace:name, one per line). Paste into 'rucio list-file-replicas', 'metacat file show', etc.`
+                "
+                @click="copyDids"
+              >
+                <template v-if="copyState === 'copied'">Copied ✓</template>
+                <template v-else-if="copyState === 'failed'">Copy failed</template>
+                <template v-else>Copy {{ copyCount }} file IDs</template>
+              </button>
               <select v-model="pageSize" class="page-size-select">
                 <option v-for="s in PAGE_SIZES" :key="s" :value="s">
                   {{ s }} / page
@@ -385,28 +432,12 @@ function fmtTimestamp(ts) {
             </div>
           </div>
 
-          <div class="table-card">
-            <div class="table-head">
-              <div class="th col-name">File</div>
-              <div class="th col-size">Size</div>
-              <div class="th col-created">Created</div>
-            </div>
-            <div v-if="pageData.rows.length === 0" class="empty">
-              No matches.
-            </div>
-            <div
-              v-for="row in pageData.rows"
-              :key="row.did"
-              class="tr"
-              @click="openFile(row.did)"
-            >
-              <div class="td col-name">
-                <span class="ns">{{ row.namespace }}:</span><span class="nm">{{ row.name }}</span>
-              </div>
-              <div class="td col-size">{{ fmtBytes(row.size) }}</div>
-              <div class="td col-created">{{ fmtTimestamp(row.created_timestamp) }}</div>
-            </div>
-          </div>
+          <FileTable
+            :rows="pageData.rows"
+            v-model:selected="selected"
+            empty-message="No matches."
+            @open-file="openFile"
+          />
         </template>
       </section>
 
@@ -722,61 +753,6 @@ function fmtTimestamp(ts) {
   font-family: var(--font-sans);
   font-size: 12.5px;
   color: var(--body);
-}
-
-/* Results table */
-.table-card {
-  background: var(--page);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  overflow-x: auto;
-}
-.table-head, .tr {
-  display: grid;
-  grid-template-columns: 1fr 90px 130px;
-  gap: 12px;
-  padding: 8px 16px;
-  align-items: center;
-  min-width: 720px;
-}
-.table-head {
-  background: var(--page);
-  border-bottom: 1px solid var(--rule);
-}
-.th {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-.tr {
-  border-top: 1px solid var(--rule-soft);
-  cursor: pointer;
-  transition: background 0.12s;
-}
-.tr:hover { background: var(--surface); }
-.td { font-size: 12px; color: var(--ink); }
-.col-name {
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.col-name .ns { color: var(--faint); font-size: 10.5px; }
-.col-name .nm { color: var(--ink); }
-.col-size, .col-created {
-  font-family: var(--font-mono);
-  text-align: right;
-  color: var(--dim);
-}
-
-.empty {
-  padding: 28px;
-  text-align: center;
-  font-size: 13.5px;
-  color: var(--dim);
 }
 
 .error-card {
