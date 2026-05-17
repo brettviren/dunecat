@@ -93,6 +93,7 @@ def list_detectors() -> list[dict[str, Any]]:
             "namespaces": d["namespaces"],
             "condb_folder": d.get("condb_folder"),
             "wiki": d.get("wiki"),
+            "chip": d.get("chip", True),
         }
         for d in load_detectors()
     ]
@@ -144,6 +145,7 @@ def detector_counts() -> list[dict[str, Any]]:
 @app.get("/api/datasets")
 def list_datasets(
     detector: str = Query(...),
+    namespace: str | None = Query(None),
     pattern: str | None = Query(None),
     tier: str | None = Query(None),
     file_type: str | None = Query(None),
@@ -158,6 +160,8 @@ def list_datasets(
         raise HTTPException(status_code=404, detail=f"Unknown detector: {detector}")
 
     items, fetched_at = datasets_for_detector(det["namespaces"])
+    if namespace:
+        items = [ds for ds in items if ds.get("namespace") == namespace]
     items = apply_default_filters(
         items,
         official_only=official_only,
@@ -184,6 +188,7 @@ def list_datasets(
 @app.get("/api/datasets/facets")
 def datasets_facets(
     detector: str = Query(...),
+    namespace: str | None = Query(None),
     tier: str | None = Query(None),
     file_type: str | None = Query(None),
     official_only: bool = Query(True),
@@ -203,6 +208,8 @@ def datasets_facets(
         raise HTTPException(status_code=404, detail=f"Unknown detector: {detector}")
 
     items, _ = datasets_for_detector(det["namespaces"])
+    if namespace:
+        items = [ds for ds in items if ds.get("namespace") == namespace]
     items = apply_default_filters(
         items,
         official_only=official_only,

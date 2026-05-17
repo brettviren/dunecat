@@ -19,7 +19,26 @@ const activeDetector = computed(
 );
 const activeCounts = computed(() => nav.counts[detectorId.value] || null);
 
+// Split detectors into chips vs. dropdown based on the `chip` flag from
+// detectors.yaml. `chip: false` collapses an entry into the dropdown.
+const chipDetectors = computed(
+  () => nav.detectors.filter((d) => d.chip !== false),
+);
+const moreDetectors = computed(
+  () => nav.detectors.filter((d) => d.chip === false),
+);
+const activeIsMore = computed(
+  () => moreDetectors.value.some((d) => d.id === detectorId.value),
+);
+
+function onMorePicked(e) {
+  const id = e.target.value;
+  e.target.value = '';
+  if (id) selectDetector(id);
+}
+
 const pattern = ref('');
+const namespace = ref('');    // '' = All namespaces in this detector
 const tier = ref('');         // '' = All
 const fileType = ref('');     // '' = All
 const officialOnly = ref(true);
@@ -45,6 +64,7 @@ async function fetchPage() {
   try {
     data.value = await getDatasets({
       detector: detectorId.value,
+      namespace: namespace.value || null,
       pattern: pattern.value || null,
       tier: tier.value || null,
       file_type: fileType.value || null,
@@ -69,6 +89,7 @@ async function fetchFacets() {
   try {
     facets.value = await getDatasetsFacets({
       detector: detectorId.value,
+      namespace: namespace.value || null,
       tier: tier.value || null,
       file_type: fileType.value || null,
       official_only: officialOnly.value,
@@ -95,12 +116,18 @@ const fileTypeOptions = computed(() => {
   return list;
 });
 
-watch([detectorId, tier, fileType, officialOnly, withMetadataOnly], () => {
+watch(detectorId, () => {
+  // Switching detector resets the namespace narrowing (the old value
+  // doesn't belong to the new detector).
+  namespace.value = '';
+});
+
+watch([detectorId, namespace, tier, fileType, officialOnly, withMetadataOnly], () => {
   page.value = 1;
   fetchPage();
 });
 
-watch([detectorId, tier, fileType, officialOnly, withMetadataOnly], () => {
+watch([detectorId, namespace, tier, fileType, officialOnly, withMetadataOnly], () => {
   fetchFacets();
 });
 
@@ -213,7 +240,7 @@ const totalPages = computed(() =>
     <div class="detector-bar">
       <div v-if="nav.detectors.length === 0" class="detector-loading">Loading detectors…</div>
       <button
-        v-for="d in nav.detectors"
+        v-for="d in chipDetectors"
         :key="d.id"
         class="detector-chip"
         :class="{ active: d.id === detectorId }"
@@ -224,6 +251,18 @@ const totalPages = computed(() =>
           {{ fmtNum(nav.counts[d.id]?.datasets_count) }}
         </span>
       </button>
+      <select
+        v-if="moreDetectors.length"
+        class="detector-more"
+        :class="{ active: activeIsMore }"
+        :value="activeIsMore ? detectorId : ''"
+        @change="onMorePicked"
+      >
+        <option value="" disabled>More detectors…</option>
+        <option v-for="d in moreDetectors" :key="d.id" :value="d.id">
+          {{ d.name }}{{ nav.counts[d.id]?.datasets_count != null ? ` (${fmtNum(nav.counts[d.id].datasets_count)})` : '' }}
+        </option>
+      </select>
     </div>
 
     <template v-if="!detectorId">
@@ -277,6 +316,20 @@ const totalPages = computed(() =>
 
       <!-- Filter row -->
       <div class="filters">
+        <label
+          v-if="activeDetector && activeDetector.namespaces.length > 1"
+          class="facet"
+        >
+          <span class="facet-label">Namespace</span>
+          <select v-model="namespace" class="facet-select">
+            <option value="">All</option>
+            <option
+              v-for="ns in activeDetector.namespaces"
+              :key="ns"
+              :value="ns"
+            >{{ ns }}</option>
+          </select>
+        </label>
         <label class="facet">
           <span class="facet-label">Tier</span>
           <select v-model="tier" class="facet-select">
@@ -458,6 +511,26 @@ const totalPages = computed(() =>
   color: var(--faint);
 }
 .detector-count.pending { opacity: 0.4; }
+
+.detector-more {
+  height: 30px;
+  padding: 0 28px 0 12px;
+  border: 1px solid var(--rule);
+  background: var(--page);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+.detector-more:hover { background: var(--surface); }
+.detector-more.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
 
 /* Detector hero */
 .hero {

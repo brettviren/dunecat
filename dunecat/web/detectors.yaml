@@ -1,3 +1,7 @@
+# Each entry can set `chip: false` to hide its own chip from the
+# detector bar and surface only inside the "More detectors…" dropdown.
+# Omitting the field keeps the chip visible (back-compat default).
+
 - id: protodune-hd
   name: ProtoDUNE-HD
   namespaces:
@@ -5,18 +9,84 @@
     - hd-protodune-det-reco
   condb_folder: pdunesp.run_conditionstest
   wiki: https://wiki.dunescience.org/wiki/ProtoDUNE-HD_Data_Catalogue
+
 - id: protodune-vd
   name: ProtoDUNE-VD
   namespaces:
     - vd-protodune
     - vd-protodune-det-reco
+    - vd-protodune-top
+    - dc25-vd-protodune
   condb_folder: pdunesp.run_conditions_vd
   wiki: https://wiki.dunescience.org/wiki/ProtoDUNE_Vertical_Drift_operation_status
+
 - id: fardet-hd
   name: DUNE FD-HD
   namespaces:
     - fardet-hd
+
 - id: fardet-vd
   name: DUNE FD-VD
   namespaces:
     - fardet-vd
+
+# Less-frequently-used detectors. Each lives only in the dropdown until
+# a `chip: true` flips it back to a top-level chip.
+- id: neardet-2x2
+  name: Near Det. 2×2
+  namespaces:
+    - neardet-2x2-minerva
+    - neardet-2x2-lar-charge
+    - neardet-2x2-lar-light
+    - neardet-2x2-lar
+    - neardet-2x2
+  chip: false
+
+- id: neardet-tms-sand
+  name: Near Det. TMS+SAND
+  namespaces:
+    - neardet-lar-tms-sand
+  chip: false
+
+- id: coldbox-hd
+  name: Coldbox HD
+  namespaces:
+    - hd-coldbox
+  chip: false
+
+- id: coldbox-vd
+  name: Coldbox VD
+  namespaces:
+    - vd-coldbox
+    - vd-coldbox-top
+    - vd-coldbox-bottom
+  chip: false
+
+- id: protodune-sp
+  name: ProtoDUNE-SP
+  namespaces:
+    - protodune-sp
+    - protodune-dp
+    - pdsp_mc_reco
+    - pdsp_mc_tuple
+    - pdsp_det_tuple
+  chip: false
+
+- id: iceberg
+  name: Iceberg
+  namespaces:
+    - iceberg
+  chip: false
+
+- id: beam-np04
+  name: NP04 beam
+  namespaces:
+    - ehn1-beam-np04
+  chip: false
+
+- id: other
+  name: Other
+  namespaces:
+    - dune
+    - group.dunele
+  chip: false
