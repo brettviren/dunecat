@@ -80,11 +80,12 @@ function loadPrefill() {
 onMounted(async () => {
   loadSavedQueries();
   await loadByRouteId();
+  const cameWithPrefill = !!route.query.prefill;
   loadPrefill();
-  // Re-execute on entry when there's a saved query selected — this is
-  // what the user expects after the browser back button (and what a
-  // bookmark to ?id=X should yield).
-  if (currentSavedId.value != null && mql.value.trim()) {
+  // Re-execute on entry when there's a saved query selected (so the
+  // browser back button restores results) or when we were navigated
+  // here from a cross-page link that pre-populated the MQL.
+  if ((currentSavedId.value != null || cameWithPrefill) && mql.value.trim()) {
     onRun();
   }
 });

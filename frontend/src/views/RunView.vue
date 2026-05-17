@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getRun, getRunConditions, getDetectors } from '../api.js';
-import { hasSelection } from '../composables/useRowNav.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -77,11 +76,6 @@ function onLookup() {
   });
 }
 
-function openFile(did) {
-  if (hasSelection()) return;
-  router.push({ name: 'file-detail', params: { did } });
-}
-
 function goToFilesQuery(tier) {
   // Cross-page link: jump into QueryView pre-populated.
   const base = `files where core.runs in (${runParam.value})`;
@@ -110,13 +104,6 @@ onMounted(async () => {
 function fmtNum(n) {
   if (n == null) return '—';
   return new Intl.NumberFormat().format(n);
-}
-function fmtBytes(n) {
-  if (n == null) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0; let v = n;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
-  return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`;
 }
 function fmtUtc(ts) {
   if (ts == null) return '—';
@@ -279,7 +266,7 @@ function fmtCellValue(v) {
       </details>
       <details v-if="condExtras.length" class="cond-config">
         <summary>All fields ({{ condExtras.length }})</summary>
-        <ul class="config-list">
+        <ul class="config-list config-list-grid">
           <li v-for="[k, v] in condExtras" :key="k">
             <span class="config-key">{{ k }}</span>
             <span class="config-uri mono">{{ fmtCellValue(v) }}</span>
@@ -363,29 +350,6 @@ function fmtCellValue(v) {
         </ul>
       </section>
 
-      <!-- Sample raw files -->
-      <section class="card card-wide">
-        <div class="card-head">
-          Sample raw files
-          <span class="card-head-action" @click="goToFilesQuery(null)">
-            Open in Query →
-          </span>
-        </div>
-        <ul class="file-list">
-          <li
-            v-for="f in data.sample_raw_files"
-            :key="f.did"
-            class="file-row"
-            @click="openFile(f.did)"
-          >
-            <span class="file-name">{{ f.name }}</span>
-            <span class="file-size">{{ fmtBytes(f.size) }}</span>
-          </li>
-        </ul>
-        <div v-if="data.sample_raw_files.length === 0" class="card-empty">
-          No raw files for this run.
-        </div>
-      </section>
     </div>
   </div>
 </template>
@@ -481,7 +445,6 @@ function fmtCellValue(v) {
   gap: 16px;
   align-items: start;
 }
-.card-wide { grid-column: 1 / -1; }
 
 .card {
   background: var(--page);
@@ -582,32 +545,6 @@ function fmtCellValue(v) {
   background: var(--accent);
 }
 
-/* File list */
-.file-list { list-style: none; margin: 0; padding: 4px 0; }
-.file-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 14px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-.file-row:hover { background: var(--surface); }
-.file-name {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--ink);
-  word-break: break-all;
-  flex: 1;
-}
-.file-size {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--faint);
-  flex-shrink: 0;
-}
-
 /* Placeholders */
 .empty, .placeholder {
   padding: 28px;
@@ -638,7 +575,10 @@ function fmtCellValue(v) {
 
 /* Conditions card */
 .cond-card { margin-bottom: 16px; }
-.kv-grid-cond { grid-template-columns: 110px 1fr; }
+.kv-grid-cond {
+  grid-template-columns: 100px minmax(0, 1fr) 100px minmax(0, 1fr);
+  gap: 6px 14px;
+}
 .dim { color: var(--faint); }
 
 .cond-config { padding: 6px 14px 14px; }
@@ -664,11 +604,18 @@ function fmtCellValue(v) {
   padding: 3px 0;
   align-items: baseline;
 }
+.config-list-grid {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) 170px minmax(0, 1fr);
+  gap: 4px 12px;
+}
+.config-list-grid li { display: contents; }
 .config-key {
   font-family: var(--font-mono);
   color: var(--dim);
-  min-width: 90px;
+  min-width: 160px;
   flex-shrink: 0;
+  word-break: break-word;
 }
 .config-uri {
   font-size: 11px;
