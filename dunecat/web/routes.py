@@ -559,6 +559,15 @@ def get_runs_conditions(
     detector: str,
     run_min: int | None = Query(None, ge=0),
     run_max: int | None = Query(None, ge=0),
+    runs: list[int] | None = Query(
+        None,
+        description=(
+            "Explicit set of run numbers. When given, the response is "
+            "post-filtered to rows whose tv is in this set. The server "
+            "still fetches the [min(runs), max(runs)] bounding range, so "
+            "pathologically wide / sparse sets are wasteful."
+        ),
+    ),
     start: str | None = Query(
         None,
         description="Inclusive start date YYYY-MM-DD (UTC).",
@@ -608,6 +617,24 @@ def get_runs_conditions(
         ),
     ),
 ) -> dict[str, Any]:
+    # Normalize runs list and derive bounding min/max if explicit run_min/max
+    # weren't given. Cap the list to keep URLs and server-side membership
+    # checks sane.
+    runs_set: set[int] | None = None
+    if runs:
+        if len(runs) > 5000:
+            raise HTTPException(
+                status_code=400,
+                detail="Too many explicit runs (max 5000); use a plain range.",
+            )
+        if any(r < 0 for r in runs):
+            raise HTTPException(status_code=400, detail="run numbers must be >= 0")
+        runs_set = set(runs)
+        if run_min is None:
+            run_min = min(runs_set)
+        if run_max is None:
+            run_max = max(runs_set)
+
     # Validate ranges.
     if run_min is not None and run_max is not None and run_max < run_min:
         raise HTTPException(
@@ -708,6 +735,7 @@ def get_runs_conditions(
             folder,
             run_min=run_min,
             run_max=run_max,
+            runs=runs_set,
             start_unix=start_unix,
             stop_unix=stop_unix,
             run_type=rt,
@@ -732,6 +760,7 @@ def get_runs_conditions(
         "folder": folder,
         "run_min": run_min,
         "run_max": run_max,
+        "runs": sorted(runs_set) if runs_set is not None else None,
         "start": start,
         "stop": stop,
         "run_type": rt,

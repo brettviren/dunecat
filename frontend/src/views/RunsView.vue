@@ -9,8 +9,21 @@ const router = useRouter();
 
 const detectors = ref([]);
 const detectorId = ref(route.query.detector || '');
-const runMin = ref(route.query.run_min || '');
-const runMax = ref(route.query.run_max || '');
+
+// Single combined Run-spec input. Accepts:
+//   "33"            single run
+//   "2,3,9"         explicit list
+//   "1:100"         inclusive range
+//   "1:100:2"       stepped range
+//   "100:1:-1"      reverse range
+//   "1:10, 50, 60:65" arbitrary mix
+// Legacy URL params run_min/run_max are migrated into the spec on load.
+const runSpec = ref(
+  route.query.runs ||
+    (route.query.run_min && route.query.run_max
+      ? `${route.query.run_min}:${route.query.run_max}`
+      : ''),
+);
 const startDate = ref(route.query.start || '');
 const stopDate = ref(route.query.stop || '');
 const beamMin = ref(route.query.beam_setp_min || '');
@@ -21,6 +34,16 @@ const polarity = ref(route.query.polarity || 'any');
 const dataStream = ref(route.query.data_stream || 'any');
 // PROD is the default — TEST runs are usually noise. 'ALL' means no filter.
 const runType = ref(route.query.run_type || 'PROD');
+
+const RUN_SPEC_HELP = [
+  'Run spec syntax:',
+  '  27305            single run',
+  '  2,3,9            explicit list',
+  '  1:100            inclusive range',
+  '  1:100:2          stepped range',
+  '  100:1:-1         reverse range',
+  '  1:10, 50, 60:65  mix tokens with commas',
+].join('\n');
 
 // Custom conditions — per-row {column, op, value} objects. URL persists
 // each row as a `cond=COL OP VAL` string, parsed back on load.
@@ -83,11 +106,58 @@ const condbDetectors = computed(() =>
 const selectedDetector = computed(
   () => detectors.value.find((d) => d.id === detectorId.value) || null,
 );
-// If only one of min/max is filled, treat it as a single-run search by
-// using the same value for both ends.
-const effectiveRunMin = computed(() => runMin.value || runMax.value || '');
-const effectiveRunMax = computed(() => runMax.value || runMin.value || '');
-const hasRunRange = computed(() => effectiveRunMin.value !== '');
+// Parse the spec into either {isRange: true, min, max} (sent as
+// run_min/run_max) or {isRange: false, runs: [...]} (sent as runs=...).
+// Empty / errored specs short-circuit hasRunRange to false.
+const parsedRunSpec = computed(() => parseRunSpec(runSpec.value));
+const hasRunRange = computed(
+  () => !parsedRunSpec.value.isEmpty && !parsedRunSpec.value.error,
+);
+
+function parseRunSpec(input) {
+  const text = (input || '').trim();
+  if (!text) {
+    return { isEmpty: true, error: null, isRange: false, runs: null, min: null, max: null };
+  }
+  const tokens = text.split(',').map((t) => t.trim()).filter(Boolean);
+
+  // Fast path: a single "A:B" token → simple inclusive range, sent as run_min/run_max.
+  if (tokens.length === 1) {
+    const m = tokens[0].match(/^(\d+):(\d+)$/);
+    if (m) {
+      const a = parseInt(m[1], 10);
+      const b = parseInt(m[2], 10);
+      if (a > b) return { isEmpty: false, error: `Range start > end (use 'A:B:-1' for reverse)`, isRange: false, runs: null, min: null, max: null };
+      return { isEmpty: false, error: null, isRange: true, runs: null, min: a, max: b };
+    }
+  }
+
+  // General path: expand every token to a set of runs.
+  const set = new Set();
+  for (const tok of tokens) {
+    const m = tok.match(/^(\d+)(?::(\d+)(?::(-?\d+))?)?$/);
+    if (!m) return { isEmpty: false, error: `Invalid token: '${tok}'`, isRange: false, runs: null, min: null, max: null };
+    const a = parseInt(m[1], 10);
+    if (m[2] === undefined) { set.add(a); continue; }
+    const b = parseInt(m[2], 10);
+    const step = m[3] === undefined ? (a <= b ? 1 : -1) : parseInt(m[3], 10);
+    if (step === 0) return { isEmpty: false, error: `Step cannot be 0: '${tok}'`, isRange: false, runs: null, min: null, max: null };
+    if (step > 0 && a > b) return { isEmpty: false, error: `Positive step but start > end: '${tok}'`, isRange: false, runs: null, min: null, max: null };
+    if (step < 0 && a < b) return { isEmpty: false, error: `Negative step but start < end: '${tok}'`, isRange: false, runs: null, min: null, max: null };
+    if (step > 0) {
+      for (let v = a; v <= b; v += step) set.add(v);
+    } else {
+      for (let v = a; v >= b; v += step) set.add(v);
+    }
+    if (set.size > 5000) return { isEmpty: false, error: `Too many runs (>5000); use a plain range`, isRange: false, runs: null, min: null, max: null };
+  }
+
+  const runs = [...set].sort((x, y) => x - y);
+  return {
+    isEmpty: false, error: null, isRange: false, runs,
+    min: runs[0] ?? null, max: runs[runs.length - 1] ?? null,
+  };
+}
 const hasDateRange = computed(() => startDate.value !== '' || stopDate.value !== '');
 const hasBeamFilter = computed(
   () =>
@@ -109,7 +179,7 @@ const canApply = computed(() => {
     !hasCustomFilter.value
   )
     return false;
-  if (hasRunRange.value && Number(effectiveRunMin.value) > Number(effectiveRunMax.value)) return false;
+  if (parsedRunSpec.value.error) return false;
   if (
     startDate.value !== '' &&
     stopDate.value !== '' &&
@@ -132,9 +202,14 @@ async function fetchRows() {
   rows.value = [];
   submitted.value = true;
   try {
+    const spec = parsedRunSpec.value;
+    const runParams = spec.isRange
+      ? { run_min: spec.min, run_max: spec.max }
+      : spec.runs && spec.runs.length
+        ? { runs: spec.runs }
+        : {};
     const payload = await getRunsConditions(detectorId.value, {
-      run_min: effectiveRunMin.value,
-      run_max: effectiveRunMax.value,
+      ...runParams,
       start: startDate.value,
       stop: stopDate.value,
       run_type: runType.value,
@@ -157,8 +232,7 @@ function onApply() {
     name: 'runs-search',
     query: {
       detector: detectorId.value,
-      run_min: runMin.value,
-      run_max: runMax.value,
+      runs: runSpec.value || undefined,
       start: startDate.value,
       stop: stopDate.value,
       run_type: runType.value,
@@ -285,25 +359,30 @@ function beamSetOf(r) {
           <option value="physics">physics</option>
         </select>
       </label>
-      <label class="field">
-        <span class="field-label">Run min</span>
+      <label class="field field-runs">
+        <span class="field-label" :title="RUN_SPEC_HELP">
+          Runs
+          <span
+            v-if="parsedRunSpec.error"
+            class="field-hint err"
+            :title="parsedRunSpec.error"
+          >{{ parsedRunSpec.error }}</span>
+          <span
+            v-else-if="parsedRunSpec.isRange"
+            class="field-hint"
+          >range {{ parsedRunSpec.min }}–{{ parsedRunSpec.max }}</span>
+          <span
+            v-else-if="parsedRunSpec.runs && parsedRunSpec.runs.length"
+            class="field-hint"
+          >{{ parsedRunSpec.runs.length }} run{{ parsedRunSpec.runs.length === 1 ? '' : 's' }}</span>
+        </span>
         <input
-          v-model="runMin"
-          type="number"
-          inputmode="numeric"
+          v-model="runSpec"
+          type="text"
           class="control mono"
-          placeholder="e.g. 27298"
-          @keyup.enter="canApply && onApply()"
-        />
-      </label>
-      <label class="field">
-        <span class="field-label">Run max</span>
-        <input
-          v-model="runMax"
-          type="number"
-          inputmode="numeric"
-          class="control mono"
-          placeholder="e.g. 27310"
+          placeholder="e.g. 27298:27310, or 27305, or 1:10:2"
+          spellcheck="false"
+          :title="RUN_SPEC_HELP"
           @keyup.enter="canApply && onApply()"
         />
       </label>
@@ -492,7 +571,21 @@ function beamSetOf(r) {
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--faint);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
+.field-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--dim);
+}
+.field-hint.err { color: var(--bad); }
+.field-runs { flex: 0 0 320px; }
+.field-runs .control.mono { width: 100%; box-sizing: border-box; }
 .control {
   height: 32px;
   padding: 0 10px;

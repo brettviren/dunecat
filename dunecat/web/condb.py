@@ -159,6 +159,7 @@ def fetch_runs(
     *,
     run_min: int | None = None,
     run_max: int | None = None,
+    runs: set[int] | None = None,  # if set, post-filter rows to this membership
     start_unix: float | None = None,
     stop_unix: float | None = None,  # exclusive upper bound
     run_type: str | None = None,
@@ -220,6 +221,8 @@ def fetch_runs(
         if run_min is not None and tv_int < run_min:
             continue
         if run_max is not None and tv_int > run_max:
+            continue
+        if runs is not None and tv_int not in runs:
             continue
         if r.get("channel") not in (0, None):
             continue
