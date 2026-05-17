@@ -41,8 +41,25 @@ const pattern = ref('');
 const namespace = ref('');    // '' = All namespaces in this detector
 const tier = ref('');         // '' = All
 const fileType = ref('');     // '' = All
-const officialOnly = ref(true);
-const withMetadataOnly = ref(true);
+// Toggle defaults: dunepro-only stays on, with-metadata-only starts off.
+// Both persist to sessionStorage so they survive remounts within the tab.
+const officialOnly = ref(_readToggle('datasets-toggle:official', true));
+const withMetadataOnly = ref(_readToggle('datasets-toggle:withMetadata', false));
+
+function _readToggle(key, fallback) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+  } catch (_e) { /* fine */ }
+  return fallback;
+}
+function _writeToggle(key, value) {
+  try { sessionStorage.setItem(key, value ? '1' : '0'); }
+  catch (_e) { /* fine */ }
+}
+watch(officialOnly, (v) => _writeToggle('datasets-toggle:official', v));
+watch(withMetadataOnly, (v) => _writeToggle('datasets-toggle:withMetadata', v));
 const page = ref(1);
 const PAGE_SIZE = 100;
 
@@ -116,10 +133,35 @@ const fileTypeOptions = computed(() => {
   return list;
 });
 
-watch(detectorId, () => {
-  // Switching detector resets the namespace narrowing (the old value
-  // doesn't belong to the new detector).
-  namespace.value = '';
+// Per-detector selection persistence for the three facet selectors.
+// Each detector has its own bucket because tier/file-type/namespace
+// values aren't meaningful across detectors.
+function _selectionKey(detId) {
+  return `datasets-select:${detId || '_'}`;
+}
+function restoreSelectionsFor(detId) {
+  let stored = {};
+  try {
+    const raw = sessionStorage.getItem(_selectionKey(detId));
+    if (raw) stored = JSON.parse(raw);
+  } catch (_e) { /* fine */ }
+  // Batch-update so the dependent watcher fires once.
+  namespace.value = stored.namespace || '';
+  tier.value = stored.tier || '';
+  fileType.value = stored.fileType || '';
+}
+watch(detectorId, (id) => restoreSelectionsFor(id), { immediate: true });
+
+watch([namespace, tier, fileType], ([ns, tr, ft]) => {
+  if (!detectorId.value) return;
+  try {
+    const payload = { namespace: ns, tier: tr, fileType: ft };
+    if (!ns && !tr && !ft) {
+      sessionStorage.removeItem(_selectionKey(detectorId.value));
+    } else {
+      sessionStorage.setItem(_selectionKey(detectorId.value), JSON.stringify(payload));
+    }
+  } catch (_e) { /* fine */ }
 });
 
 watch([detectorId, namespace, tier, fileType, officialOnly, withMetadataOnly], () => {
