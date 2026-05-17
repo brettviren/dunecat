@@ -26,10 +26,26 @@ const runSpec = ref(
 );
 const startDate = ref(route.query.start || '');
 const stopDate = ref(route.query.stop || '');
-const beamMin = ref(route.query.beam_setp_min || '');
-const beamMax = ref(route.query.beam_setp_max || '');
-// 'any' = no polarity filter. Server-side translation: 'positive' or 'Negative'.
-const polarity = ref(route.query.polarity || 'any');
+
+// Single combined beam-spec input. Accepts a signed momentum range
+// where the sign carries the polarity:
+//   "3"        single value, +3 GeV/c, positive
+//   "1:3"      1–3 GeV/c, positive
+//   "3:1"      same range (order-insensitive)
+//   "-1:-7"    1–7 GeV/c, negative
+//   "-7:-1"    same range
+// Mixed signs are an error. Empty = no beam filter.
+const beamSpec = ref(
+  route.query.beam ||
+    _legacyBeamFromUrl(route.query.beam_setp_min, route.query.beam_setp_max, route.query.polarity),
+);
+
+function _legacyBeamFromUrl(min, max, pol) {
+  if (!min && !max) return '';
+  const sign = pol === 'negative' ? '-' : '';
+  if (min && max) return `${sign}${min}:${sign}${max}`;
+  return `${sign}${min || max}`;
+}
 // 'any' = no stream filter; else one of cosmics / calibration / physics.
 const dataStream = ref(route.query.data_stream || 'any');
 // PROD is the default — TEST runs are usually noise. 'ALL' means no filter.
@@ -43,6 +59,16 @@ const RUN_SPEC_HELP = [
   '  1:100:2          stepped range',
   '  100:1:-1         reverse range',
   '  1:10, 50, 60:65  mix tokens with commas',
+].join('\n');
+
+const BEAM_SPEC_HELP = [
+  'Beam range syntax (sign carries polarity):',
+  '  3        single value, +3 GeV/c',
+  '  1:3      1–3 GeV/c, positive polarity',
+  '  3:1      same (order-insensitive)',
+  '  -1:-7    1–7 GeV/c, negative polarity',
+  '  -7:-1    same',
+  'Mixed signs (e.g. -1:3) is rejected. Empty = no beam filter.',
 ].join('\n');
 
 // Custom conditions — per-row {column, op, value} objects. URL persists
@@ -114,6 +140,30 @@ const hasRunRange = computed(
   () => !parsedRunSpec.value.isEmpty && !parsedRunSpec.value.error,
 );
 
+const parsedBeamSpec = computed(() => parseBeamSpec(beamSpec.value));
+const hasBeamFilter = computed(
+  () => !parsedBeamSpec.value.isEmpty && !parsedBeamSpec.value.error,
+);
+
+function parseBeamSpec(input) {
+  const text = (input || '').trim();
+  if (!text) return { isEmpty: true, error: null, min: null, max: null, polarity: 'any' };
+  const m = text.match(/^(-?\d+(?:\.\d+)?)(?::(-?\d+(?:\.\d+)?))?$/);
+  if (!m) return { isEmpty: false, error: `Invalid beam spec: '${text}'`, min: null, max: null, polarity: 'any' };
+  const a = parseFloat(m[1]);
+  const b = m[2] !== undefined ? parseFloat(m[2]) : a;
+  const signA = Math.sign(a);
+  const signB = Math.sign(b);
+  if (signA !== 0 && signB !== 0 && signA !== signB) {
+    return { isEmpty: false, error: 'Beam range must be same-sign (both + or both -)', min: null, max: null, polarity: 'any' };
+  }
+  const sign = signA || signB;  // 0 if both zero
+  const polarity = sign < 0 ? 'negative' : 'positive';
+  const min = Math.min(Math.abs(a), Math.abs(b));
+  const max = Math.max(Math.abs(a), Math.abs(b));
+  return { isEmpty: false, error: null, min, max, polarity };
+}
+
 function parseRunSpec(input) {
   const text = (input || '').trim();
   if (!text) {
@@ -159,12 +209,6 @@ function parseRunSpec(input) {
   };
 }
 const hasDateRange = computed(() => startDate.value !== '' || stopDate.value !== '');
-const hasBeamFilter = computed(
-  () =>
-    beamMin.value !== '' ||
-    beamMax.value !== '' ||
-    (polarity.value && polarity.value !== 'any'),
-);
 const hasStreamFilter = computed(
   () => dataStream.value && dataStream.value !== 'any',
 );
@@ -180,16 +224,11 @@ const canApply = computed(() => {
   )
     return false;
   if (parsedRunSpec.value.error) return false;
+  if (parsedBeamSpec.value.error) return false;
   if (
     startDate.value !== '' &&
     stopDate.value !== '' &&
     stopDate.value < startDate.value
-  )
-    return false;
-  if (
-    beamMin.value !== '' &&
-    beamMax.value !== '' &&
-    Number(beamMin.value) > Number(beamMax.value)
   )
     return false;
   return true;
@@ -214,9 +253,9 @@ async function fetchRows() {
       stop: stopDate.value,
       run_type: runType.value,
       data_stream: dataStream.value,
-      beam_setp_min: beamMin.value,
-      beam_setp_max: beamMax.value,
-      polarity: polarity.value,
+      beam_setp_min: hasBeamFilter.value ? parsedBeamSpec.value.min : '',
+      beam_setp_max: hasBeamFilter.value ? parsedBeamSpec.value.max : '',
+      polarity: hasBeamFilter.value ? parsedBeamSpec.value.polarity : 'any',
       cond: builtCustomConds.value,
     });
     rows.value = payload.rows || [];
@@ -237,9 +276,7 @@ function onApply() {
       stop: stopDate.value,
       run_type: runType.value,
       data_stream: dataStream.value,
-      beam_setp_min: beamMin.value,
-      beam_setp_max: beamMax.value,
-      polarity: polarity.value,
+      beam: beamSpec.value || undefined,
       cond: builtCustomConds.value,
     },
   });
@@ -336,7 +373,6 @@ function beamSetOf(r) {
       <label class="field">
         <span class="field-label">Detector</span>
         <select v-model="detectorId" class="control">
-          <option value="" disabled>— choose a detector —</option>
           <option v-for="d in condbDetectors" :key="d.id" :value="d.id">
             {{ d.name }}
           </option>
@@ -345,9 +381,9 @@ function beamSetOf(r) {
       <label class="field">
         <span class="field-label">Type</span>
         <select v-model="runType" class="control">
-          <option value="PROD">PROD only</option>
-          <option value="TEST">TEST only</option>
-          <option value="ALL">All</option>
+          <option value="PROD">PROD</option>
+          <option value="TEST">TEST</option>
+          <option value="ALL">ALL</option>
         </select>
       </label>
       <label class="field">
@@ -404,46 +440,38 @@ function beamSetOf(r) {
           @keyup.enter="canApply && onApply()"
         />
       </label>
-      <label class="field">
-        <span class="field-label">|Beam setp| min</span>
+      <label class="field field-beam">
+        <span class="field-label" :title="BEAM_SPEC_HELP">
+          Beam range (GeV/c)
+          <span
+            v-if="parsedBeamSpec.error"
+            class="field-hint err"
+            :title="parsedBeamSpec.error"
+          >{{ parsedBeamSpec.error }}</span>
+          <span
+            v-else-if="!parsedBeamSpec.isEmpty"
+            class="field-hint"
+          >{{ parsedBeamSpec.polarity === 'negative' ? '−' : '+' }} {{ parsedBeamSpec.min }}–{{ parsedBeamSpec.max }}</span>
+        </span>
         <input
-          v-model="beamMin"
-          type="number"
-          step="any"
-          min="0"
+          v-model="beamSpec"
+          type="text"
           class="control mono"
-          placeholder="GeV/c"
-        />
-      </label>
-      <label class="field">
-        <span class="field-label">|Beam setp| max</span>
-        <input
-          v-model="beamMax"
-          type="number"
-          step="any"
-          min="0"
-          class="control mono"
-          placeholder="GeV/c"
+          placeholder="e.g. 1:3, -7:-1, or 3"
+          spellcheck="false"
+          :title="BEAM_SPEC_HELP"
           @keyup.enter="canApply && onApply()"
         />
-      </label>
-      <label class="field">
-        <span class="field-label">Polarity</span>
-        <select v-model="polarity" class="control">
-          <option value="any">Any</option>
-          <option value="positive">Positive</option>
-          <option value="negative">Negative</option>
-        </select>
       </label>
       <button class="btn btn-primary" :disabled="!canApply" @click="onApply">
         Apply
       </button>
     </div>
     <p class="hint">
-      Need at least one filter: run range, date range, beam, stream,
-      or a custom condition below. Dates are inclusive UTC days. Beam
-      bounds are magnitudes (|setp|); polarity selects the sign — "Any"
-      with bounds unions positive and negative sides.
+      Need at least one filter: runs, date range, beam, stream, or a
+      custom condition below. Dates are inclusive UTC days. Beam range
+      uses signed momentum (e.g. <code>1:3</code> = positive,
+      <code>-7:-1</code> = negative).
     </p>
 
     <section class="custom-card" v-if="columns.length">
@@ -586,6 +614,8 @@ function beamSetOf(r) {
 .field-hint.err { color: var(--bad); }
 .field-runs { flex: 0 0 320px; }
 .field-runs .control.mono { width: 100%; box-sizing: border-box; }
+.field-beam { flex: 0 0 220px; }
+.field-beam .control.mono { width: 100%; box-sizing: border-box; }
 .control {
   height: 32px;
   padding: 0 10px;
