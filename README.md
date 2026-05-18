@@ -2,9 +2,7 @@
   <img src="frontend/public/logo/dunecat-logo.png" alt="dunecat" width="420">
 </p>
 
-A local web app for browsing the DUNE metacat file catalog: pick a detector,
-narrow datasets by tier / file type, look up runs, and run raw MQL queries —
-all from a browser, against the production metacat server.
+A unified Web UI over DUNE's [metacat](https://github.com/fermitools/metacat), [conditions DB](https://condb2.readthedocs.io/en/latest/index.html), and [Rucio](https://rucio.cern.ch) — search files, inspect runs, and find replicas without juggling three tools.
 
 ## Quick start
 
