@@ -23,6 +23,7 @@ from .files import file_datasets, file_did, find_files
 from .filters import FileFilters, parse_meta, parse_run_range, parse_runs
 from .format import render_dataset_table
 from .query import run_query
+from .server import server_app
 from .timestamps import (
     DEFAULT_FORMAT,
     DEFAULT_MAX_CANDIDATES,
@@ -38,6 +39,7 @@ dataset_app = typer.Typer(no_args_is_help=True, add_completion=False)
 file_app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(file_app, name="file")
+app.add_typer(server_app, name="server")
 
 
 @app.callback()

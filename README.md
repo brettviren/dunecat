@@ -20,16 +20,28 @@ cp .env.example .env       # then fill in METACAT_USER + RUCIO_ACCOUNT
 uv run dunecat login       # browser opens for OIDC; once per ~10 days
 ```
 
-Then in two terminals:
+Start both servers in the background, then open the app:
 
 ```bash
-uv run uvicorn dunecat.web:app --port 8000     # backend
-cd frontend && npm run dev                     # frontend (Vite on :5173)
+uv run dunecat server start    # uvicorn :8000 + Vite :5173
+open http://127.0.0.1:5173
 ```
 
-Open <http://127.0.0.1:5173>. Use `127.0.0.1`, not `localhost` — macOS prefers
-IPv6 while uvicorn binds IPv4 only. uvicorn is **not** run with `--reload` on
-macOS (heavy file-watcher); restart it manually after backend changes.
+Use `127.0.0.1`, not `localhost` (macOS prefers IPv6; uvicorn binds IPv4 only).
+
+## Managing the servers
+
+```bash
+uv run dunecat server status                # are they up?
+uv run dunecat server logs                  # tail -F both (Ctrl-C detaches)
+uv run dunecat server restart backend       # after editing backend code
+uv run dunecat server stop                  # shut down both
+```
+
+Add `backend` or `frontend` as the last arg to scope a command to one
+service. Logs live at `~/.dunecat/log/{backend,frontend}.log`, PIDs at
+`~/.dunecat/run/`. uvicorn is **not** run with `--reload` on macOS (heavy
+file-watcher); restart it via the command above after backend changes.
 
 ## Details
 
