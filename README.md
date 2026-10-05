@@ -43,6 +43,17 @@ uv tool install git+https://github.com/czczc/dunecat   # adds `dunecat` to PATH
 uvx --from git+https://github.com/czczc/dunecat dunecat login
 ```
 
+Bulk download from the CLI: query metacat for DIDs, resolve each to a Rucio
+replica URL, then download. `replicas` prints the best PFN per file (disk
+before tape, `root://` before `davs://`); `--scheme root` restricts the
+scheme, `--all` prints every door, `--json` gives the full per-site record.
+
+```bash
+dunecat query "files where namespace = 'hd-protodune' and core.runs in (32814) and core.data_tier = 'raw'" \
+  | dunecat replicas --scheme root > urls.txt
+xargs -n1 dunecat download --dest ./data < urls.txt
+```
+
 ## Managing the servers
 
 ```bash

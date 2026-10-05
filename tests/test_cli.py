@@ -504,3 +504,71 @@ def test_dataset_show_missing_did_exits_1(monkeypatch):
 
     assert result.exit_code == 1
     assert "Dataset not found: nope:not-here" in result.stderr
+
+
+_SAMPLE_REPLICAS = {
+    "scope": "hd-protodune",
+    "name": "f1.hdf5",
+    "bytes": 10,
+    "md5": None,
+    "adler32": "abcd",
+    "replicas": [
+        {
+            "rse": "FNAL_DCACHE",
+            "type": "DISK",
+            "pfns": [
+                {"scheme": "root", "pfn": "root://fnal/f1.hdf5", "priority": 1},
+                {"scheme": "davs", "pfn": "davs://fnal/f1.hdf5", "priority": 2},
+            ],
+        },
+        {
+            "rse": "FNAL_TAPE",
+            "type": "TAPE",
+            "pfns": [{"scheme": "root", "pfn": "root://tape/f1.hdf5", "priority": 1}],
+        },
+    ],
+}
+
+
+def _patch_replicas(monkeypatch, lookup):
+    from dunecat.web import auth, rucio
+
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(auth, "prime", lambda: None)
+    monkeypatch.setattr(rucio, "list_replicas", lookup)
+
+
+def test_replicas_prints_best_pfn_per_did_from_stdin(monkeypatch):
+    seen = []
+
+    def fake_list_replicas(scope, name):
+        seen.append((scope, name))
+        return _SAMPLE_REPLICAS if name == "f1.hdf5" else None
+
+    _patch_replicas(monkeypatch, fake_list_replicas)
+    result = runner.invoke(
+        cli.app, ["replicas"], input="hd-protodune:f1.hdf5\nhd-protodune:gone.hdf5\n"
+    )
+
+    assert result.exit_code == 1  # one DID had no replicas
+    assert result.stdout == "root://fnal/f1.hdf5\n"
+    assert "no replicas: hd-protodune:gone.hdf5" in result.stderr
+    assert seen == [("hd-protodune", "f1.hdf5"), ("hd-protodune", "gone.hdf5")]
+
+
+def test_replicas_scheme_filter_and_all(monkeypatch):
+    _patch_replicas(monkeypatch, lambda scope, name: _SAMPLE_REPLICAS)
+    result = runner.invoke(
+        cli.app, ["replicas", "--scheme", "root", "--all", "hd-protodune:f1.hdf5"]
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["root://fnal/f1.hdf5", "root://tape/f1.hdf5"]
+
+
+def test_replicas_json_emits_record(monkeypatch):
+    _patch_replicas(monkeypatch, lambda scope, name: _SAMPLE_REPLICAS)
+    result = runner.invoke(cli.app, ["replicas", "--json", "hd-protodune:f1.hdf5"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["replicas"][0]["rse"] == "FNAL_DCACHE"

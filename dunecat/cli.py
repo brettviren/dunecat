@@ -392,6 +392,73 @@ def _render_query_item(item: dict[str, Any]) -> str:
     return json.dumps(item, default=str)
 
 
+@app.command("replicas")
+def replicas_cmd(
+    dids: list[str] | None = typer.Argument(
+        None,
+        help=(
+            "File DIDs as 'NAMESPACE:NAME'. When omitted, DIDs are read from "
+            "stdin one per line, so `dunecat query ... | dunecat replicas` works."
+        ),
+    ),
+    scheme: str | None = typer.Option(
+        None, "--scheme", help="Only PFNs with this URL scheme: root, davs, or https."
+    ),
+    all_pfns: bool = typer.Option(
+        False, "--all", help="Print every matching PFN, not just the best one per file."
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit JSONL: one object per file with replicas grouped by site."
+    ),
+) -> None:
+    """Look up Rucio replica URLs (PFNs) for file DIDs.
+
+    Prints one PFN per file: the first door at the first disk site, root://
+    before davs://. Pipe the output into `xargs -n1 dunecat download` to
+    fetch the files in bulk. Uses the bearer token from `dunecat login`.
+    """
+    from .web import auth
+    from .web.rucio import RucioAuthError, RucioError, list_replicas
+
+    load_dotenv()
+    auth.prime()
+    os.environ["BEARER_TOKEN_FILE"] = str(auth._bearer_path())
+
+    if not dids:
+        dids = [line.strip() for line in sys.stdin if line.strip()]
+    missing = 0
+    for did in dids:
+        if ":" not in did:
+            typer.echo(f"not a DID (expected NAMESPACE:NAME): {did}", err=True)
+            raise typer.Exit(2)
+        scope, name = did.split(":", 1)
+        try:
+            rec = list_replicas(scope, name)
+        except RucioAuthError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(2)
+        except RucioError as e:
+            typer.echo(f"rucio error for {did}: {e}", err=True)
+            raise typer.Exit(1)
+        if json_out:
+            typer.echo(json.dumps(rec if rec is not None else {"did": did, "replicas": []}))
+            continue
+        pfns = [
+            p["pfn"]
+            for site in (rec or {}).get("replicas", [])
+            for p in site["pfns"]
+            if scheme is None or p["scheme"] == scheme
+        ]
+        if not pfns:
+            typer.echo(f"no replicas: {did}", err=True)
+            missing += 1
+            continue
+        for pfn in pfns if all_pfns else pfns[:1]:
+            typer.echo(pfn)
+    if missing:
+        raise typer.Exit(1)
+
+
 @dataset_app.command("files")
 def dataset_files(
     did: str = typer.Argument(..., help="Dataset DID as 'NAMESPACE:NAME'."),
