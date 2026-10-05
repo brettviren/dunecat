@@ -1015,3 +1015,21 @@ def test_files_mql_error_surfaces_as_400(monkeypatch, client):
     )
     assert response.status_code == 400
     assert "MQL syntax error" in response.json()["detail"]
+
+
+def test_datasets_sort_by_files_desc(monkeypatch, client):
+    _install_fake_client(monkeypatch)
+    response = client.get(
+        "/api/datasets",
+        params={"detector": "protodune-hd", "sort": "files", "order": "desc"},
+    )
+    assert response.status_code == 200
+    assert [r["file_count"] for r in response.json()["rows"]] == [10, 5, 3]
+
+
+def test_datasets_sort_rejects_unknown_column(monkeypatch, client):
+    _install_fake_client(monkeypatch)
+    response = client.get(
+        "/api/datasets", params={"detector": "protodune-hd", "sort": "creator"}
+    )
+    assert response.status_code == 422
