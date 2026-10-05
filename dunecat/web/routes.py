@@ -189,6 +189,34 @@ def detector_counts() -> list[dict[str, Any]]:
     return out
 
 
+def _min_run(ds: dict[str, Any]) -> Any:
+    runs = (ds.get("metadata") or {}).get("core.runs")
+    if isinstance(runs, list):
+        return min(runs) if runs else None
+    return runs
+
+
+_SORT_KEYS = {
+    "name": lambda ds: (ds["namespace"], ds["name"]),
+    "runs": _min_run,
+    "files": lambda ds: ds.get("file_count"),
+    "tier": lambda ds: (ds.get("metadata") or {}).get("core.data_tier"),
+    "updated": lambda ds: ds.get("updated_timestamp") or ds.get("created_timestamp"),
+}
+SORT_PATTERN = "^(" + "|".join(_SORT_KEYS) + ")$"
+
+
+def _sort_datasets(
+    items: list[dict[str, Any]], sort: str, order: str
+) -> list[dict[str, Any]]:
+    """Sort by one table column. Rows missing the value go last either way."""
+    key = _SORT_KEYS[sort]
+    present = [ds for ds in items if key(ds) is not None]
+    missing = [ds for ds in items if key(ds) is None]
+    present.sort(key=key, reverse=(order == "desc"))
+    return present + missing
+
+
 @app.get("/api/datasets")
 def list_datasets(
     detector: str = Query(...),
@@ -201,6 +229,8 @@ def list_datasets(
     with_metadata_only: bool = Query(True),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
+    sort: str | None = Query(None, pattern=SORT_PATTERN),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
 ) -> dict[str, Any]:
     det = detector_by_id(detector)
     if det is None:
@@ -218,6 +248,8 @@ def list_datasets(
         items, pattern=pattern, tier=tier, file_type=file_type, meta=meta
     )
 
+    if sort:
+        filtered = _sort_datasets(filtered, sort, order)
     total = len(filtered)
     start = (page - 1) * page_size
     end = start + page_size

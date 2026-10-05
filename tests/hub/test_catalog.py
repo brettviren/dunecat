@@ -444,3 +444,29 @@ def test_catalog_routes_require_auth(client):
         else:
             r = client.post(path, json={"mql": "files from x:y"})
         assert r.status_code == 401, f"{method} {path} → {r.status_code}"
+
+
+def test_sort_datasets_puts_missing_values_last_in_both_directions():
+    from dunecat.hub.routes.catalog import _sort_datasets
+
+    rows = [
+        {"namespace": "a", "name": "old", "updated_timestamp": 100.0},
+        {"namespace": "a", "name": "none"},
+        {"namespace": "a", "name": "new", "updated_timestamp": 300.0},
+        {"namespace": "a", "name": "created-only", "created_timestamp": 200.0},
+    ]
+    desc = [r["name"] for r in _sort_datasets(rows, "updated", "desc")]
+    asc = [r["name"] for r in _sort_datasets(rows, "updated", "asc")]
+    assert desc == ["new", "created-only", "old", "none"]
+    assert asc == ["old", "created-only", "new", "none"]
+
+    by_runs = _sort_datasets(
+        [
+            {"namespace": "a", "name": "x", "metadata": {"core.runs": [30, 12]}},
+            {"namespace": "a", "name": "y", "metadata": {"core.runs": [5]}},
+            {"namespace": "a", "name": "z", "metadata": {}},
+        ],
+        "runs",
+        "asc",
+    )
+    assert [r["name"] for r in by_runs] == ["y", "x", "z"]

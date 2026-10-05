@@ -62,6 +62,8 @@ watch(officialOnly, (v) => _writeToggle('datasets-toggle:official', v));
 watch(withMetadataOnly, (v) => _writeToggle('datasets-toggle:withMetadata', v));
 const page = ref(1);
 const PAGE_SIZE = 100;
+const sortKey = ref('updated');   // newest first by default
+const sortOrder = ref('desc');
 
 const loading = ref(false);
 const error = ref(null);
@@ -89,6 +91,8 @@ async function fetchPage() {
       with_metadata_only: withMetadataOnly.value,
       page: page.value,
       page_size: PAGE_SIZE,
+      sort: sortKey.value,
+      order: sortOrder.value,
     });
   } catch (e) {
     error.value = e.message;
@@ -182,6 +186,22 @@ watch(pattern, () => {
 });
 
 watch(page, fetchPage);
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortKey.value = key;
+    // Counts and dates read best largest/newest first.
+    sortOrder.value = key === 'files' || key === 'updated' ? 'desc' : 'asc';
+  }
+  page.value = 1;
+  fetchPage();
+}
+function sortArrow(key) {
+  if (sortKey.value !== key) return '';
+  return sortOrder.value === 'asc' ? '▲' : '▼';
+}
 
 async function onRefresh() {
   if (!detectorId.value) return;
@@ -465,11 +485,17 @@ const totalPages = computed(() =>
       <template v-else-if="data">
         <div class="table-card">
           <div class="table-head">
-            <div class="th col-name">Dataset</div>
-            <div class="th col-runs">Runs</div>
-            <div class="th col-files">Files</div>
-            <div class="th col-tier">Tier</div>
-            <div class="th col-updated">Updated</div>
+            <div
+              v-for="col in [['name', 'Dataset'], ['runs', 'Runs'], ['files', 'Files'], ['tier', 'Tier'], ['updated', 'Updated']]"
+              :key="col[0]"
+              class="th sortable"
+              :class="[`col-${col[0]}`, { active: sortKey === col[0] }]"
+              role="button"
+              title="Sort by this column"
+              @click="toggleSort(col[0])"
+            >
+              {{ col[1] }}<span class="arrow">{{ sortArrow(col[0]) }}</span>
+            </div>
           </div>
           <div
             v-for="row in data.rows"
@@ -749,6 +775,9 @@ const totalPages = computed(() =>
   background: var(--page);
   border-bottom: 1px solid var(--rule);
 }
+.th.sortable { cursor: pointer; user-select: none; }
+.th.sortable:hover, .th.active { color: var(--ink); }
+.th .arrow { margin-left: 4px; font-size: 9px; }
 .th {
   font-family: var(--font-sans);
   font-size: 11px;
